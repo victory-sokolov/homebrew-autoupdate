@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+# brew-autoupdate - Selectively auto-update Homebrew packages using fzf
+# Usage: brew autoupdate <command> [options]
+
+set -euo pipefail
+
+readonly VERSION="1.0.0"
+readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/brew-autoupdate"
+readonly CONFIG_FILE="$CONFIG_DIR/packages.conf"
+readonly LOG_FILE="$CONFIG_DIR/autoupdate.log"
+readonly PLIST_LABEL="com.brew-autoupdate.daemon"
+readonly PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+print_header() {
+  echo -e "\n${BOLD}${CYAN}🍺 brew-autoupdate v${VERSION}${RESET}\n"
+}
+
+print_success() { echo -e "${GREEN}✓${RESET} $*"; }
+print_error()   { echo -e "${RED}✗${RESET} $*" >&2; }
+print_info()    { echo -e "${BLUE}→${RESET} $*"; }
+print_warn()    { echo -e "${YELLOW}⚠${RESET} $*"; }
+
+log() {
+  mkdir -p "$CONFIG_DIR"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
+# ── Dependency checks ─────────────────────────────────────────────────────────
+check_deps() {
+  local missing=()
+  command -v brew &>/dev/null || missing+=("brew")
+  command -v fzf  &>/dev/null || missing+=("fzf")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    print_error "Missing required dependencies: ${missing[*]}"
+    echo -e "  Install with: ${DIM}brew install ${missing[*]}${RESET}"
+    exit 1
+  fi
+}
+
+# ── Config helpers ────────────────────────────────────────────────────────────
+ensure_config() {
+  mkdir -p "$CONFIG_DIR"
+  touch "$CONFIG_FILE"
+}
+
+read_pinned() {
+  [[ -f "$CONFIG_FILE" ]] && grep -v '^#' "$CONFIG_FILE" | grep -v '^[[:space:]]*$' || true
+}
+
+write_pinned() {
+  local packages=("$@")
+  {
+    echo "# brew-autoupdate: selected packages for automatic updates"
+    echo "# Generated: $(date)"
+    echo "# Edit manually or run: brew autoupdate select"
+    printf '%s\n' "${packages[@]}"
+  } > "$CONFIG_FILE"
+}
+
+# ── Commands ──────────────────────────────────────────────────────────────────
+
+cmd_select() {
+  check_deps
+  print_header
+
+  print_info "Fetching installed packages…"
+  local -a all_formulae all_casks installed_pkgs
+  mapfile -t all_formulae < <(brew list --formula 2>/dev/null)
+  mapfile -t all_casks    < <(brew list --cask   2>/dev/null | sed 's/$/ (cask)/')
+  installed_pkgs=("${all_formulae[@]}" "${all_casks[@]}")
+
+  if [[ ${#installed_pkgs[@]} -eq 0 ]]; then
+    print_warn "No installed packages found."
+    exit 0
+  fi
+
+  ensure_config
+  local current_pinned
+  current_pinned=$(read_pinned)
+
+  # Build fzf pre-selection: mark already-pinned packages
+  local fzf_input=""
+  for pkg in "${installed_pkgs[@]}"; do
+    local base_name="${pkg% (cask)}"
+    if echo "$current_pinned" | grep -qx "$base_name"; then
+      fzf_input+="${pkg}"$'\n'
+    else
+      fzf_input+="${pkg}"$'\n'
+    fi
+  done
+
+  echo -e "${DIM}  TAB to select/deselect  ·  ENTER to confirm  ·  ESC to cancel${RESET}\n"
+
+  # Pre-select previously pinned
+  local preselect_args=()
+  while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && preselect_args+=(--bind "start:+select($pkg)")
+  done <<< "$current_pinned"
+
+  local selected
+  selected=$(echo "$fzf_input" | fzf \
+    --multi \
+    --prompt="  Select packages for auto-update ❯ " \
+    --header="$(echo -e "${BOLD}Installed Homebrew Packages${RESET}\nSPACE to toggle · TAB to mark · ENTER to save")" \
+    --preview="brew info {1} 2>/dev/null | head -20" \
+    --preview-window="right:45%:wrap" \
+    --color="header:cyan,prompt:blue,pointer:green,marker:green,hl:yellow,hl+:yellow" \
+    --marker="●" \
+    --pointer="▶" \
+    --cycle \
+    --bind "ctrl-a:select-all" \
+    --bind "ctrl-d:deselect-all" \
+    --bind "ctrl-t:toggle-all" \
+    $( [[ -n "$current_pinned" ]] && echo "--bind" && printf "start:$(echo "$current_pinned" | head -1 | xargs -I{} echo 'select({})')" ) \
+    2>/dev/null || true)
+
+  if [[ -z "$selected" ]]; then
+    print_warn "No packages selected. Configuration unchanged."
+    exit 0
+  fi
+
+  # Strip "(cask)" suffix for storage
+  local -a final_pkgs
+  while IFS= read -r pkg; do
+    [[ -n "$pkg" ]] && final_pkgs+=("${pkg% (cask)}")
+  done <<< "$selected"
+
+  write_pinned "${final_pkgs[@]}"
+
+  echo ""
+  print_success "Saved ${#final_pkgs[@]} package(s) for auto-update:"
+  printf "  ${DIM}%s${RESET}\n" "${final_pkgs[@]}"
+  echo ""
+  print_info "Run ${BOLD}brew autoupdate start${RESET} to enable the background daemon."
+}
+
+cmd_list() {
+  print_header
+  ensure_config
+  local pinned
+  pinned=$(read_pinned)
+
+  if [[ -z "$pinned" ]]; then
+    print_warn "No packages configured. Run: ${BOLD}brew autoupdate select${RESET}"
+    return
+  fi
+
+  echo -e "${BOLD}Packages scheduled for auto-update:${RESET}\n"
+  local outdated
+  outdated=$(brew outdated --quiet 2>/dev/null || true)
+
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    if echo "$outdated" | grep -qx "$pkg"; then
+      echo -e "  ${YELLOW}↑${RESET} ${BOLD}$pkg${RESET} ${YELLOW}(update available)${RESET}"
+    else
+      echo -e "  ${GREEN}✓${RESET} $pkg"
+    fi
+  done <<< "$pinned"
+  echo ""
+}
+
+cmd_run() {
+  check_deps
+  ensure_config
+
+  local pinned
+  pinned=$(read_pinned)
+
+  if [[ -z "$pinned" ]]; then
+    print_warn "No packages configured for auto-update."
+    log "SKIP: no packages configured"
+    exit 0
+  fi
+
+  log "START: checking for updates"
+  print_info "Updating Homebrew index…"
+  brew update --quiet 2>/dev/null
+
+  local outdated
+  outdated=$(brew outdated --quiet 2>/dev/null || true)
+
+  local updated=0 failed=0
+
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    if echo "$outdated" | grep -qx "$pkg"; then
+      print_info "Upgrading ${BOLD}$pkg${RESET}…"
+      if brew upgrade "$pkg" &>/dev/null; then
+        print_success "$pkg upgraded"
+        log "OK: upgraded $pkg"
+        ((updated++))
+      else
+        print_error "Failed to upgrade $pkg"
+        log "FAIL: $pkg"
+        ((failed++))
+      fi
+    fi
+  done <<< "$pinned"
+
+  log "END: updated=$updated failed=$failed"
+
+  if [[ $updated -eq 0 && $failed -eq 0 ]]; then
+    print_success "All selected packages are up to date."
+  else
+    [[ $updated -gt 0 ]] && print_success "$updated package(s) upgraded."
+    [[ $failed  -gt 0 ]] && print_error  "$failed package(s) failed."
+  fi
+}
+
+cmd_start() {
+  print_header
+
+  # Resolve the real path of this script
+  local script_path
+  script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+  local interval="${1:-3600}"  # default: every hour
+
+  cat > "$PLIST_PATH" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${script_path}</string>
+    <string>run</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>${interval}</integer>
+  <key>StandardOutPath</key>
+  <string>${LOG_FILE}</string>
+  <key>StandardErrorPath</key>
+  <string>${LOG_FILE}</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>
+EOF
+
+  launchctl unload "$PLIST_PATH" 2>/dev/null || true
+  launchctl load -w "$PLIST_PATH"
+
+  local interval_fmt
+  if   (( interval >= 3600 )); then interval_fmt="$((interval/3600))h"
+  elif (( interval >= 60   )); then interval_fmt="$((interval/60))m"
+  else interval_fmt="${interval}s"
+  fi
+
+  print_success "Daemon started — checking every ${interval_fmt}."
+  print_info    "Logs: ${DIM}$LOG_FILE${RESET}"
+}
+
+cmd_stop() {
+  print_header
+  if [[ -f "$PLIST_PATH" ]]; then
+    launchctl unload "$PLIST_PATH" 2>/dev/null && print_success "Daemon stopped." || print_warn "Daemon was not running."
+  else
+    print_warn "No daemon plist found — already stopped?"
+  fi
+}
+
+cmd_status() {
+  print_header
+  local running=false
+  if launchctl list 2>/dev/null | grep -q "$PLIST_LABEL"; then
+    running=true
+  fi
+
+  if $running; then
+    print_success "Daemon is ${BOLD}running${RESET}"
+  else
+    print_warn "Daemon is ${BOLD}not running${RESET}"
+  fi
+
+  echo ""
+  print_info "Config:  ${DIM}$CONFIG_FILE${RESET}"
+  print_info "Log:     ${DIM}$LOG_FILE${RESET}"
+  echo ""
+  cmd_list
+}
+
+cmd_logs() {
+  if [[ -f "$LOG_FILE" ]]; then
+    tail -n "${1:-50}" "$LOG_FILE"
+  else
+    print_warn "No log file yet."
+  fi
+}
+
+cmd_help() {
+  print_header
+  cat <<EOF
+${BOLD}USAGE${RESET}
+  brew autoupdate <command> [options]
+
+${BOLD}COMMANDS${RESET}
+  ${CYAN}select${RESET}           Interactively pick packages to auto-update (uses fzf)
+  ${CYAN}list${RESET}             Show currently selected packages & update status
+  ${CYAN}run${RESET}              Run updates now for all selected packages
+  ${CYAN}start${RESET} [seconds]  Enable background daemon (default interval: 3600s)
+  ${CYAN}stop${RESET}             Disable the background daemon
+  ${CYAN}status${RESET}           Show daemon status + selected packages
+  ${CYAN}logs${RESET} [lines]     Tail the update log (default: 50 lines)
+  ${CYAN}version${RESET}          Print version
+  ${CYAN}help${RESET}             Show this help
+
+${BOLD}EXAMPLES${RESET}
+  brew autoupdate select          # pick packages with fzf
+  brew autoupdate start           # check every hour
+  brew autoupdate start 1800      # check every 30 minutes
+  brew autoupdate run             # trigger update immediately
+  brew autoupdate logs 100        # see last 100 log lines
+
+${BOLD}FILES${RESET}
+  Config:  ${DIM}$CONFIG_FILE${RESET}
+  Log:     ${DIM}$LOG_FILE${RESET}
+  Plist:   ${DIM}$PLIST_PATH${RESET}
+
+${BOLD}SHORTCUTS (inside fzf)${RESET}
+  SPACE / TAB   toggle selection
+  CTRL-A        select all
+  CTRL-D        deselect all
+  CTRL-T        toggle all
+  ENTER         confirm
+  ESC           cancel
+EOF
+}
+
+# ── Dispatch ──────────────────────────────────────────────────────────────────
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    select)  cmd_select "$@" ;;
+    list)    cmd_list   "$@" ;;
+    run)     cmd_run    "$@" ;;
+    start)   cmd_start  "$@" ;;
+    stop)    cmd_stop   "$@" ;;
+    status)  cmd_status "$@" ;;
+    logs)    cmd_logs   "$@" ;;
+    version) echo "brew-autoupdate $VERSION" ;;
+    help|-h|--help) cmd_help ;;
+    *) print_error "Unknown command: $cmd"; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"
