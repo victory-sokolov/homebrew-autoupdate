@@ -1,13 +1,15 @@
 class BrewAutoupdate < Formula
   desc "Selectively auto-update Homebrew packages using fzf"
   homepage "https://github.com/victory-sokolov/brew-autoupdate"
-  version "0.0.1"
+  url "https://github.com/victory-sokolov/brew-autoupdate/archive/refs/tags/v0.1.0.tar.gz"
+  sha256 "TODO: replace-after-creating-git-tag"
   license "MIT"
   head "https://github.com/victory-sokolov/brew-autoupdate.git", branch: "main"
 
   depends_on "fzf"
 
   def install
+    (prefix/"VERSION").write version.to_s
     bin.install "bin/brew-autoupdate"
   end
 
@@ -28,6 +30,6 @@ class BrewAutoupdate < Formula
   end
 
   test do
-    assert_match "brew-autoupdate", shell_output("#{bin}/brew-autoupdate version")
+    assert_match(/brew-autoupdate \d+\.\d+\.\d+/, shell_output("#{bin}/brew-autoupdate version"))
   end
 end

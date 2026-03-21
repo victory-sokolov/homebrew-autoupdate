@@ -30,20 +30,20 @@ Instead of blindly upgrading everything, you choose **exactly which packages** g
 ### Via Homebrew tap (recommended)
 
 ```bash
-brew tap yourusername/brew-autoupdate
+brew tap victory-sokolov/brew-autoupdate
 brew install brew-autoupdate
 ```
 
 ### Manual / one-liner
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/yourusername/brew-autoupdate/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/victory-sokolov/brew-autoupdate/main/install.sh)"
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/brew-autoupdate.git
+git clone https://github.com/victory-sokolov/brew-autoupdate.git
 cp brew-autoupdate/bin/brew-autoupdate "$(brew --prefix)/bin/"
 chmod +x "$(brew --prefix)/bin/brew-autoupdate"
 ```

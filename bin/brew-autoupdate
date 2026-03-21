@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-readonly VERSION="0.1.0"
+# Version: single source of truth (also see VERSION file in repo)
+readonly VERSION="${VERSION:-$(cat "${BASH_SOURCE[0]%/*}/../VERSION" 2>/dev/null || echo "dev")}"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/brew-autoupdate"
 readonly CONFIG_FILE="$CONFIG_DIR/packages.conf"
 readonly LOG_FILE="$CONFIG_DIR/autoupdate.log"
