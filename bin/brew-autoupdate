@@ -108,6 +108,12 @@ cmd_select() {
     [[ -n "$pkg" ]] && preselect_args+=(--bind "start:+select($pkg)")
   done <<< "$current_pinned"
 
+  # Use temp file to ensure fzf can access TTY for interactive display
+  local tmp_input
+  tmp_input=$(mktemp)
+  echo "$fzf_input" > "$tmp_input"
+  trap 'rm -f "$tmp_input"' EXIT
+
   local selected
   selected=$(fzf \
     --multi \
@@ -123,8 +129,10 @@ cmd_select() {
     --bind "ctrl-d:deselect-all" \
     --bind "ctrl-t:toggle-all" \
     $( [[ -n "$current_pinned" ]] && echo "--bind" && printf "start:$(echo "$current_pinned" | head -1 | xargs -I{} echo 'select({})')" ) \
-    </dev/tty < <(echo "$fzf_input") \
+    < "$tmp_input" \
     2>/dev/null || true)
+
+  rm -f "$tmp_input"
 
   if [[ -z "$selected" ]]; then
     print_warn "No packages selected. Configuration unchanged."

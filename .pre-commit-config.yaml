@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-shebang-scripts-are-executable
+      - id: check-executables-have-shebangs
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ['-e', 'SC2015,SC2046,SC2059']  # ignore: && || pattern, word-splitting, printf format
+
+  - repo: https://github.com/openstack/bashate
+    rev: 2.1.1
+    hooks:
+      - id: bashate
+        args: ['-i=E003,E004,E006,E010,E043']  # ignore: indent, newline-at-end, line-length, do-placement, arithmetic
