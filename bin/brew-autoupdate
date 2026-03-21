@@ -226,6 +226,10 @@ cmd_start() {
   local script_path
   script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
+  # Detect Homebrew prefix for PATH
+  local brew_prefix
+  brew_prefix="$(brew --prefix 2>/dev/null || echo "/opt/homebrew")"
+
   local interval="${1:-3600}"  # default: every hour
 
   cat > "$PLIST_PATH" <<EOF
@@ -241,6 +245,11 @@ cmd_start() {
     <string>${script_path}</string>
     <string>run</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${brew_prefix}/bin:${brew_prefix}/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StartInterval</key>
   <integer>${interval}</integer>
   <key>StandardOutPath</key>
