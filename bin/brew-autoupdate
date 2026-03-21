@@ -109,7 +109,7 @@ cmd_select() {
   done <<< "$current_pinned"
 
   local selected
-  selected=$(echo "$fzf_input" | fzf \
+  selected=$(fzf \
     --multi \
     --prompt="  Select packages for auto-update ❯ " \
     --header="$(echo -e "${BOLD}Installed Homebrew Packages${RESET}\nSPACE to toggle · TAB to mark · ENTER to save")" \
@@ -123,6 +123,7 @@ cmd_select() {
     --bind "ctrl-d:deselect-all" \
     --bind "ctrl-t:toggle-all" \
     $( [[ -n "$current_pinned" ]] && echo "--bind" && printf "start:$(echo "$current_pinned" | head -1 | xargs -I{} echo 'select({})')" ) \
+    </dev/tty < <(echo "$fzf_input") \
     2>/dev/null || true)
 
   if [[ -z "$selected" ]]; then
