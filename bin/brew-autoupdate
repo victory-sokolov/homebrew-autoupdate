@@ -68,6 +68,33 @@ write_pinned() {
   } > "$CONFIG_FILE"
 }
 
+# ── Last update helper ────────────────────────────────────────────────────────
+get_last_update() {
+  local pkg="$1"
+  [[ ! -f "$LOG_FILE" ]] && return
+  local entry
+  entry=$(grep "OK: upgraded ${pkg}" "$LOG_FILE" | tail -1)
+  [[ -z "$entry" ]] && return
+
+  # Parse timestamp: [2026-03-21 11:45:56]
+  local ts
+  ts=$(echo "$entry" | sed -n 's/^\[\([0-9-]* [0-9:]*\)\].*/\1/p')
+
+  # Parse version (if present): "to 1.2.3" or old format without version
+  local ver
+  ver=$(echo "$entry" | sed -n 's/.*to \([^ ]*\).*/\1/p')
+
+  # Format timestamp as "Mar 21 11:45"
+  local formatted_ts
+  formatted_ts=$(date -j -f "%Y-%m-%d %H:%M:%S" "$ts" "+%b %d %H:%M" 2>/dev/null || echo "$ts")
+
+  if [[ -n "$ver" ]]; then
+    echo "$formatted_ts → $ver"
+  else
+    echo "$formatted_ts"
+  fi
+}
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 cmd_select() {
@@ -159,10 +186,15 @@ cmd_list() {
 
   while IFS= read -r pkg; do
     [[ -z "$pkg" ]] && continue
+    local last_update
+    last_update=$(get_last_update "$pkg")
+    local update_info=""
+    [[ -n "$last_update" ]] && update_info=" ${DIM}($last_update)${RESET}"
+
     if echo "$outdated" | grep -qx "$pkg"; then
-      echo -e "  ${YELLOW}↑${RESET} ${BOLD}$pkg${RESET} ${YELLOW}(update available)${RESET}"
+      echo -e "  ${YELLOW}↑${RESET} ${BOLD}$pkg${RESET} ${YELLOW}(update available)${RESET}${update_info}"
     else
-      echo -e "  ${GREEN}✓${RESET} $pkg"
+      echo -e "  ${GREEN}✓${RESET} $pkg${update_info}"
     fi
   done <<< "$pinned"
   echo ""
@@ -195,8 +227,10 @@ cmd_run() {
     if echo "$outdated" | grep -qx "$pkg"; then
       print_info "Upgrading ${BOLD}$pkg${RESET}…"
       if brew upgrade "$pkg" &>/dev/null; then
-        print_success "$pkg upgraded"
-        log "OK: upgraded $pkg"
+        local new_version
+        new_version=$(brew list --versions "$pkg" 2>/dev/null | awk '{print $2}')
+        print_success "$pkg upgraded${new_version:+ to $new_version}"
+        log "OK: upgraded $pkg${new_version:+ to $new_version}"
         ((updated++))
       else
         print_error "Failed to upgrade $pkg"
