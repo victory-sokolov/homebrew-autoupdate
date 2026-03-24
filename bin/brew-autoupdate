@@ -5,13 +5,18 @@
 set -euo pipefail
 
 # Resolve script path (handles symlinks for Homebrew installations)
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -L "${BASH_SOURCE[0]}" ]]; then
-  SCRIPT_PATH="$(cd "$(dirname "$(readlink "${BASH_SOURCE[0]}")")" && pwd)"
+  LINK_TARGET="$(readlink "${BASH_SOURCE[0]}")"
+  # Handle relative symlinks
+  if [[ "$LINK_TARGET" != /* ]]; then
+    LINK_TARGET="${SCRIPT_DIR}/${LINK_TARGET}"
+  fi
+  SCRIPT_DIR="$(cd "$(dirname "$LINK_TARGET")" && pwd)"
 fi
 
 # Version: single source of truth (also see VERSION file in repo)
-readonly VERSION="${VERSION:-$(cat "${SCRIPT_PATH}/../VERSION" 2>/dev/null || echo "dev")}"
+readonly VERSION="${VERSION:-$(cat "${SCRIPT_DIR}/../VERSION" 2>/dev/null || echo "dev")}"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/brew-autoupdate"
 readonly CONFIG_FILE="$CONFIG_DIR/packages.conf"
 readonly LOG_FILE="$CONFIG_DIR/autoupdate.log"
