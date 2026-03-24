@@ -2,7 +2,7 @@ class BrewAutoupdate < Formula
   desc "Selectively auto-update Homebrew packages using fzf"
   homepage "https://github.com/victory-sokolov/homebrew-autoupdate"
   url "https://github.com/victory-sokolov/homebrew-autoupdate/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "37c8e3d37bbe7d891c4889b201e3fbb3975f7273c546ee265ab6e9a431961352"
+  sha256 "951baecdf3fcb92d0a4f11fbbfcc1a024ca9a1c854c8208fa9934f026be437b7"
   license "MIT"
   head "https://github.com/victory-sokolov/homebrew-autoupdate.git", branch: "main"
 
